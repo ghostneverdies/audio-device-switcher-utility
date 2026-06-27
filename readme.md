@@ -35,7 +35,7 @@ git clone https://github.com/Anonymi69/audio-device-switcher-utility.git
 ```
 
 **Option 2 — don't want to deal with git or GitHub's "Code" button?**
-Grab the zipped source straight from the repo's **Releases** page
+Grab the zipped source straight from the repo's [Releases](https://github.com/Anonymi69/audio-device-switcher-utility/releases/) page
 instead — it's just a pre-packaged copy of the full source, no fuss.
 
 > ⚠️ Note: there's no pre-built `.exe` release. Random pre-built
