@@ -60,14 +60,13 @@ def show_admin_needed_for_action_message():
         0x10,
     )
 
-def relaunch_as_admin() -> bool:
-    try:
-        exe = sys.executable
-        params = " ".join(f'"{a}"' for a in sys.argv)
-        ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
-        return ret > 32
-    except Exception:
-        return False
+def show_startup_task_error_message(action: str, detail: str):
+    ctypes.windll.user32.MessageBoxW(
+        0,
+        f"Couldn't {action} the startup task.\n\n{detail}",
+        "Startup task error",
+        0x10,
+    )
 
 TASK_NAME = "AudioDeviceSwitcherStartup"
 
@@ -87,97 +86,73 @@ def is_startup_task_installed() -> bool:
     except Exception:
         return False
 
-def _run_elevated_bat(bat_lines: list[str], timeout_sec: int = 25) -> tuple[bool, str]:
-    temp_dir = os.environ.get("TEMP") or os.environ.get("TMP") or os.getcwd()
-    token = str(int(time.time() * 1000))
-    bat_path = os.path.join(temp_dir, f"ads_task_{token}.bat")
-    status_path = os.path.join(temp_dir, f"ads_status_{token}.txt")
-    full_lines = ["@echo off"] + bat_lines + [
-        f'if errorlevel 1 (echo FAIL > "{status_path}") else (echo OK > "{status_path}")',
-        f'del "%~f0"',
-    ]
-    try:
-        with open(bat_path, "w", encoding="utf-8") as f:
-            f.write("\r\n".join(full_lines) + "\r\n")
-    except Exception as e:
-        return False, str(e)
-    try:
-        ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", bat_path, "", None, 0)
-        if ret <= 32:
-            try:
-                os.remove(bat_path)
-            except Exception:
-                pass
-            return False, "denied"
-    except Exception as e:
-        return False, str(e)
-    waited = 0.0
-    while waited < timeout_sec:
-        if os.path.exists(status_path):
-            try:
-                content = open(status_path, encoding="utf-8").read().strip()
-            except Exception:
-                content = ""
-            try:
-                os.remove(status_path)
-            except Exception:
-                pass
-            return content == "OK", content
-        time.sleep(0.25)
-        waited += 0.25
-    return False, "timeout"
-
 def install_startup_task_elevated() -> tuple[bool, str]:
-    exe = app_exe_path()
-    bat_lines = [
-        f'schtasks /Create /TN "{TASK_NAME}" /TR "\'{exe}\'" /SC ONLOGON /RL HIGHEST /F',
-    ]
-    return _run_elevated_bat(bat_lines)
+    try:
+        import comtypes.client
+        scheduler = comtypes.client.CreateObject("Schedule.Service")
+        scheduler.Connect()
+        root = scheduler.GetFolder("\\")
+        definition = scheduler.NewTask(0)
+        definition.RegistrationInfo.Description = "Audio Device Switcher startup task"
+        triggers = definition.Triggers
+        trigger = triggers.Create(9)  
+        trigger.Enabled = True
+        actions = definition.Actions
+        action = actions.Create(0)
+        action = comtypes.client.GetBestInterface(action)
+        action.Path = app_exe_path()
+        action.Arguments = ""
+        action.WorkingDirectory = os.path.dirname(app_exe_path())
+        definition.Principal.RunLevel = 1  
+        settings = definition.Settings
+        settings.Enabled = True
+        settings.StopIfGoingOnBatteries = False
+        settings.DisallowStartIfOnBatteries = False
+        root.RegisterTaskDefinition(
+            TASK_NAME,
+            definition,
+            6,
+            None, None,
+            3,   
+            "",
+        )
+        return True, "OK"
+    except Exception as e:
+        return False, str(e)
 
 def remove_startup_task_elevated() -> tuple[bool, str]:
-    bat_lines = [
-        f'schtasks /Delete /TN "{TASK_NAME}" /F',
-    ]
-    return _run_elevated_bat(bat_lines)
-
-def _try_direct_schtasks(args: list[str]) -> bool:
     try:
-        result = subprocess.run(
-            args, capture_output=True, text=True,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+        import comtypes.client
+        scheduler = comtypes.client.CreateObject("Schedule.Service")
+        scheduler.Connect()
+        root = scheduler.GetFolder("\\")
+        root.DeleteTask(TASK_NAME, 0)
+        return True, "OK"
+    except Exception as e:
+        return False, str(e)
 
 def add_to_startup(exit_on_denial: bool = False) -> bool:
-    exe = app_exe_path()
-    direct_args = [
-        "schtasks", "/Create", "/TN", TASK_NAME,
-        "/TR", exe, "/SC", "ONLOGON", "/RL", "HIGHEST", "/F",
-    ]
-    if _try_direct_schtasks(direct_args):
-        return True
     ok, status = install_startup_task_elevated()
     if ok:
         return True
-    if status == "denied":
+    if "denied" in status.lower() or "access" in status.lower():
         show_admin_needed_for_action_message()
         if exit_on_denial:
             sys.exit(1)
+    else:
+        show_startup_task_error_message("add", status)
     return False
 
 def remove_from_startup(exit_on_denial: bool = False) -> bool:
-    direct_args = ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"]
-    if _try_direct_schtasks(direct_args):
-        return True
     ok, status = remove_startup_task_elevated()
     if ok:
         return True
-    if status == "denied":
+    if "denied" in status.lower() or "access" in status.lower():
         show_admin_needed_for_action_message()
         if exit_on_denial:
             sys.exit(1)
+    else:
+        show_startup_task_error_message("remove", status)
     return False
 
 def app_dir():
@@ -440,19 +415,6 @@ def _apply_dwm_rounded_corners(hwnd: int, small: bool = False):
         )
     except Exception:
         pass  
-
-def _make_fade_anim(widget: QWidget, duration_in: int, duration_out: int):
-    anim_in = QPropertyAnimation(widget, b"windowOpacity", widget)
-    anim_in.setDuration(duration_in)
-    anim_in.setStartValue(0.0)
-    anim_in.setEndValue(1.0)
-    anim_in.setEasingCurve(QEasingCurve.Type.OutCubic)
-    anim_out = QPropertyAnimation(widget, b"windowOpacity", widget)
-    anim_out.setDuration(duration_out)
-    anim_out.setStartValue(1.0)
-    anim_out.setEndValue(0.0)
-    anim_out.setEasingCurve(QEasingCurve.Type.InQuad)
-    return anim_in, anim_out
 
 class CategoryDropdown(QWidget):
     picked = pyqtSignal(int)
@@ -2522,6 +2484,7 @@ class TrayIcon(QSystemTrayIcon):
         self._close_action.triggered.connect(self._on_close)
         self._menu.addAction(self._close_action)
         self.setContextMenu(self._menu)
+        self._menu.aboutToShow.connect(self._refresh_startup_label)
         self._setup_win = None
         self._refresh_startup_label()
         self.activated.connect(self._on_activated)
