@@ -2449,8 +2449,8 @@ class TrayIcon(QSystemTrayIcon):
         QApplication.instance().quit()
 
     def _on_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            self.contextMenu().popup(QCursor.pos())
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._on_edit()
 
 class Bridge(QObject):
     show_osd = pyqtSignal(str, str, int)
