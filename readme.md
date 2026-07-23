@@ -28,17 +28,21 @@ right place. 🎧✨
   build
 - Administrator rights (needed for the global hotkey and the startup
   toggle — see [security.md](security.md) for why)
+- [MinGW-w64](https://www.mingw-w64.org) (gcc on PATH) — required by
+  the Nuitka build step to compile the C output. Install via
+  `scoop install mingw`, or add it manually and ensure `gcc.exe` is
+  reachable from your terminal.
 
 ## 📥 Getting the Source
 
 **Option 1 — git clone:**
 ```bash
-git clone https://github.com/Anonymi69/audio-device-switcher-utility.git
+git clone https://github.com/ghostneverdies/audio-device-switcher-utility.git
 ```
 
 **Option 2 — don't want to deal with git or GitHub's "Code" button?**
 Grab the zipped source straight from the repo's
-[**Releases**](https://github.com/Anonymi69/audio-device-switcher-utility/releases/)
+[**Releases**](https://github.com/ghostneverdies/audio-device-switcher-utility/releases/)
 page instead — it's just a pre-packaged copy of the full source, no fuss.
 
 > ⚠️ Note: there's no pre-built `.exe` release. Random pre-built
@@ -69,17 +73,21 @@ dependencies separately for this path (it does that for you).
 1. Make sure `icon.ico` is present in the project root before
    building. If it's missing, the build still succeeds but produces
    an exe with no custom icon.
-2. From the project root, double-click (or run):
+2. Make sure [MinGW-w64](https://www.mingw-w64.org) is installed
+   and `gcc.exe` is on your PATH (e.g. via `scoop install mingw`).
+3. From the project root, double-click (or run):
    ```bash
    build.bat
    ```
    This will:
+   - Verify MinGW-w64 (`gcc`) is available on PATH
    - Install/upgrade dependencies from `requirements.txt`
    - Clean any previous `build/`, `dist/`, and `.spec` artifacts
-   - Build a single-file, no-console executable with PyInstaller
+   - Compile with [Nuitka](https://nuitka.net) using MinGW-w64 as
+     the C compiler backend, producing a single-file, no-console exe
    - Output it as `dist\Audio Device Switcher.exe`
    - Open the `dist` folder when done
-3. Test it by:
+4. Test it by:
    - Running `Audio Device Switcher.exe` **as administrator**
      (right-click → "Run as administrator"), **or**
    - Launching it from an already-elevated terminal/command prompt
@@ -109,7 +117,8 @@ more than ~50MB of memory. 🪶
 
 **Is this a virus? Is this app safe?**
 This is not a virus. We don't distribute any executables — you build
-it yourself from the source in this repo using `build.bat`. Since
+it yourself from the source in this repo using `build.bat` (which
+compiles via [Nuitka](https://nuitka.net) with MinGW-w64). Since
 there's no binary floating around for anything to be hidden in, you
 can verify it however you like: read the source yourself, or paste it
 into any AI chatbot and ask it to review what the code actually does.

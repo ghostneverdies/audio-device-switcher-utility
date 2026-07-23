@@ -83,9 +83,18 @@ The application reads and writes only to its own installation directory and the 
 | `ads_status_<ms>.bat` | `%TEMP%\ads_status_<ms>.txt` | Temporary status sentinel written by the batch file to signal success or failure back to the main process. Deleted immediately after being read. |
 | Custom icon copies | `<exe_dir>\icons\<filename>` | User-selected image files (PNG, JPG, etc.) copied into the `icons\` subdirectory when the user assigns a custom image icon to a device. The original file is not modified. |
 
-### PyInstaller `_MEIPASS` Bundle Extraction
+### Nuitka Onefile Bundle Extraction
 
-When distributed as a frozen executable (built with PyInstaller), the runtime extracts bundled resources into a temporary `_MEIPASS` directory managed entirely by PyInstaller. Audio Device Switcher copies exactly one file from `_MEIPASS` to the executable's directory at no point during runtime — `icon.ico` is bundled inside the executable and resolved at runtime via the `icon_path()` function, which first checks `<exe_dir>\icon.ico` and falls back to `sys._MEIPASS\icon.ico` if absent. No extraction or copying of `icon.ico` is performed by application code; PyInstaller handles bundle extraction transparently before `main()` is called.
+When distributed as a frozen executable (built with Nuitka via
+`build.bat`), the runtime extracts bundled resources from a
+self-contained payload into a temporary directory managed by the
+Nuitka onefile bootstrap. Audio Device Switcher copies exactly one
+file from this bundle to the executable's directory — `icon.ico` is
+bundled inside the executable and resolved at runtime via the
+`icon_path()` function, which first checks `<exe_dir>\icon.ico` and
+falls back to Nuitka's runtime data path if absent. The extraction
+and staging are handled transparently before `main()` is called; no
+application code performs the extraction.
 
 ---
 

@@ -1,9 +1,4 @@
 import sys, os, json, time, math, ctypes, threading, subprocess
-import comtypes, keyboard
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL, GUID, IUnknown
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QScrollArea, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QSystemTrayIcon, QMenu, QFileDialog,
@@ -26,7 +21,14 @@ def is_admin() -> bool:
         return False
 
 def _is_frozen() -> bool:
-    return getattr(sys, "frozen", False)
+    if getattr(sys, "frozen", False):
+        return True
+    try:
+        if hasattr(sys.modules.get("__main__", object()), "__compiled__"):
+            return True
+    except Exception:
+        pass
+    return False
 
 def show_admin_required_message():
     if _is_frozen():
@@ -71,7 +73,7 @@ def show_startup_task_error_message(action: str, detail: str):
 TASK_NAME = "AudioDeviceSwitcherStartup"
 
 def app_exe_path() -> str:
-    if getattr(sys, "frozen", False):
+    if _is_frozen():
         return sys.executable
     return os.path.abspath(__file__)
 
@@ -156,21 +158,29 @@ def remove_from_startup(exit_on_denial: bool = False) -> bool:
     return False
 
 def app_dir():
-    base = getattr(sys, "_MEIPASS", None)
-    return os.path.dirname(sys.executable if base else os.path.abspath(__file__))
+    if _is_frozen():
+        return os.path.dirname(os.path.abspath(sys.argv[0]))
+    return os.path.dirname(os.path.abspath(__file__))
 
 def config_path():
     return os.path.join(app_dir(), "devices.json")
 
 def icon_path():
-    candidate = os.path.join(app_dir(), "icon.ico")
+    base = app_dir()
+    candidate = os.path.join(base, "icon.ico")
     if os.path.exists(candidate):
         return candidate
     bundled = getattr(sys, "_MEIPASS", None)
     if bundled:
-        bundled_candidate = os.path.join(bundled, "icon.ico")
-        if os.path.exists(bundled_candidate):
-            return bundled_candidate
+        p = os.path.join(bundled, "icon.ico")
+        if os.path.exists(p):
+            return p
+    if _is_frozen():
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        if exe_dir != base:
+            p = os.path.join(exe_dir, "icon.ico")
+            if os.path.exists(p):
+                return p
     return None
 
 CONFIG_PATH = config_path()
@@ -226,68 +236,19 @@ def ui_font_emphasis_weight() -> QFont.Weight:
     _resolved_emphasis_weight = QFont.Weight.Normal
     return QFont.Weight.Normal
 
-class IPolicyConfig(IUnknown):
-    _iid_ = GUID("{f8679f50-850a-41cf-9c72-430f290290c8}")
-    _methods_ = [
-        comtypes.STDMETHOD(ctypes.HRESULT, "GetMixFormat"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "GetDeviceFormat"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "ResetDeviceFormat"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "SetDeviceFormat"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "GetProcessingPeriod"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "SetProcessingPeriod"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "GetShareMode"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "SetShareMode"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "GetPropertyValue"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "SetPropertyValue"),
-        comtypes.STDMETHOD(ctypes.HRESULT, "SetDefaultEndpoint", [ctypes.c_wchar_p, ctypes.c_uint]),
-        comtypes.STDMETHOD(ctypes.HRESULT, "SetEndpointVisibility"),
-    ]
-
-POLICY_CONFIG_CLSID = GUID("{870af99c-171d-4f9e-af0d-e63df40c2bc9}")
-CLSID_MMDEVICE_ENUMERATOR = GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
 DEVICE_STATE_ACTIVE = 0x00000001
 
 def set_default_device(device_id):
-    policy = comtypes.CoCreateInstance(POLICY_CONFIG_CLSID, IPolicyConfig, CLSCTX_ALL)
-    for role in (0, 1, 2):
-        policy.SetDefaultEndpoint(device_id, role)
+    raise RuntimeError("Audio subsystem not initialized")
 
 def is_device_active(device_id: str) -> bool:
-    try:
-        enum = comtypes.CoCreateInstance(CLSID_MMDEVICE_ENUMERATOR, IMMDeviceEnumerator, CLSCTX_ALL)
-        device = enum.GetDevice(device_id)
-        return device.GetState() == DEVICE_STATE_ACTIVE
-    except Exception:
-        return False
+    return False
 
 def get_volume_percent(device_id):
-    for attempt in range(2):
-        try:
-            enum = comtypes.CoCreateInstance(CLSID_MMDEVICE_ENUMERATOR, IMMDeviceEnumerator, CLSCTX_ALL)
-            device = enum.GetDevice(device_id)
-            iface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            vol = cast(iface, POINTER(IAudioEndpointVolume))
-            return round(vol.GetMasterVolumeLevelScalar() * 100)
-        except Exception:
-            if attempt == 0:
-                time.sleep(0.25)
     return 0
 
 def enumerate_devices() -> list[dict]:
-    seen = set()
-    result = []
-    for d in AudioUtilities.GetAllDevices():
-        try:
-            state = d._dev.GetState()
-        except Exception:
-            state = DEVICE_STATE_ACTIVE
-        if state != DEVICE_STATE_ACTIVE:
-            continue
-        if d.id in seen:
-            continue
-        seen.add(d.id)
-        result.append({"id": d.id, "name": d.FriendlyName})
-    return result
+    return []
 
 DEVICE_CATEGORIES = [
     (("headphone", "headset", "earphone", "earbud", "airpod"), "🎧", "Headphones"),
@@ -395,26 +356,20 @@ class SmoothScrollArea(QScrollArea):
         e.accept()
 
 CARD_H = 92
+
+def _set_rounded_corners(hwnd: int):
+    try:
+        pref = ctypes.c_int(2)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref),
+        )
+    except Exception:
+        pass
 TOG_W = 46
 TOG_H = 26
 KNOB_D = TOG_H - 8
 TOG_OFF = 4.0
 TOG_ON = float(TOG_W - KNOB_D - 4)
-DWMWA_WINDOW_CORNER_PREFERENCE = 33
-DWMWCP_ROUND = 2
-DWMWCP_ROUND_SMALL = 3
-
-def _apply_dwm_rounded_corners(hwnd: int, small: bool = False):
-    try:
-        pref = ctypes.c_int(DWMWCP_ROUND_SMALL if small else DWMWCP_ROUND)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            ctypes.byref(pref),
-            ctypes.sizeof(pref),
-        )
-    except Exception:
-        pass  
 
 class CategoryDropdown(QWidget):
     picked = pyqtSignal(int)
@@ -486,7 +441,7 @@ class CategoryDropdown(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
-        _apply_dwm_rounded_corners(int(self.winId()), small=True)
+        _set_rounded_corners(int(self.winId()))
         self._anim_out.stop()
         self._anim_in.setStartValue(0.0)
         self._anim_in.setEndValue(1.0)
@@ -745,7 +700,7 @@ class HotkeyCaptureDropdown(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
-        _apply_dwm_rounded_corners(int(self.winId()), small=True)
+        _set_rounded_corners(int(self.winId()))
         self.setFocus()
         self.activateWindow()
         self._anim_out.stop()
@@ -1325,7 +1280,7 @@ class CustomDeviceDialog(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
-        _apply_dwm_rounded_corners(int(self.winId()))
+        _set_rounded_corners(int(self.winId()))
         self._label_input.setFocus()
         self._anim_out.stop()
         self._anim_in.setStartValue(0.0)
@@ -2111,7 +2066,6 @@ class SetupWindow(QWidget):
         super().__init__()
         self._devices = all_devices
         self._cards: list[DeviceCard] = []
-        self._drag_pos = None
         self._hotkey = initial_hotkey
         self._modal_dialog = None
         self._initial_hotkey = initial_hotkey
@@ -2120,9 +2074,8 @@ class SetupWindow(QWidget):
             {d["id"] for d in config["devices"]} if config else set()
         )
         self._is_edit_mode = getattr(QApplication.instance(), "_tray_started", False)
-        self.setWindowTitle("Volume Switcher")
+        self.setWindowTitle("Audio Device Switcher")
         self.setFixedWidth(500)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self._build_ui()
         self.adjustSize()
 
@@ -2142,75 +2095,42 @@ class SetupWindow(QWidget):
         if self._is_locked():
             self._beep_and_focus_modal()
             return
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
-    def mouseMoveEvent(self, e):
-        if self._is_locked():
-            return
-        if self._drag_pos and e.buttons() == Qt.MouseButton.LeftButton:
-            self.move(e.globalPosition().toPoint() - self._drag_pos)
-
-    def mouseReleaseEvent(self, e):
-        if self._is_locked():
-            return
-        self._drag_pos = None
+    def closeEvent(self, e):
+        app = QApplication.instance()
+        if getattr(app, "_tray_started", False):
+            e.ignore()
+            self.hide()
+        else:
+            e.accept()
+            QApplication.quit()
 
     def showEvent(self, e):
         super().showEvent(e)
-        _apply_dwm_rounded_corners(int(self.winId()))
+        try:
+            hwnd = int(self.winId())
+            attr = ctypes.c_int(20)
+            value = ctypes.c_int(1)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)
+            )
+        except Exception:
+            pass
 
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         w, h = self.width(), self.height()
         p.fillRect(0, 0, w, h, BG)
         g = QLinearGradient(0, 0, 0, 80)
         g.setColorAt(0, QColor(255, 255, 255, 12))
         g.setColorAt(1, QColor(255, 255, 255, 0))
         p.fillRect(0, 0, w, 80, QBrush(g))
-        p.setPen(QPen(QColor(255, 255, 255, 28)))
-        p.drawLine(1, 0, w - 2, 0)    
-        p.drawLine(0, 0, 0, h - 1)    
-        p.drawLine(w - 1, 0, w - 1, h - 1)  
-        p.drawLine(1, h - 1, w - 2, h - 1)  
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        tbar = QWidget()
-        tbar.setFixedHeight(58)
-        tbar.setStyleSheet("background: transparent;")
-        tb = QHBoxLayout(tbar)
-        tb.setContentsMargins(24, 0, 14, 0)
-        tb.setSpacing(10)
-        icon = QLabel("🎵")
-        icon.setFont(QFont("Segoe UI Emoji", 15))
-        icon.setStyleSheet("background: transparent; color: white;")
-        title = QLabel("Device Setup")
-        tf = QFont(ui_font_family(), 14)
-        tf.setWeight(ui_font_emphasis_weight())
-        title.setFont(tf)
-        title.setStyleSheet("color: #e8e8f4; background: transparent;")
-        close = QPushButton("✕")
-        close.setFixedSize(30, 30)
-        close.setStyleSheet("""
-            QPushButton { background: transparent; color: #505070; border: none; font-size: 14px; border-radius: 7px; }
-            QPushButton:hover { background: rgba(255,55,55,0.22); color: #ff5555; }
-        """)
-        close.clicked.connect(self._on_close_clicked)
-        tb.addWidget(icon)
-        tb.addWidget(title)
-        tb.addStretch()
-        tb.addWidget(close)
-        root.addWidget(tbar)
-        sep = QWidget()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet("background: rgba(255,255,255,0.05);")
-        root.addWidget(sep)
         body = QWidget()
         body.setStyleSheet("background: transparent;")
         bl = QVBoxLayout(body)
@@ -2263,13 +2183,6 @@ class SetupWindow(QWidget):
         bl.addWidget(self._btn)
         root.addWidget(body)
         QTimer.singleShot(0, self._refresh_btn)
-
-    def _on_close_clicked(self):
-        app = QApplication.instance()
-        if getattr(app, "_tray_started", False):
-            self.close()
-        else:
-            QApplication.quit()
 
     def _on_hotkey_changed(self, hotkey: str):
         self._hotkey = hotkey
@@ -2542,97 +2455,248 @@ class TrayIcon(QSystemTrayIcon):
 class Bridge(QObject):
     show_osd = pyqtSignal(str, str, int)
     show_unavailable = pyqtSignal(str)
+    toggle_requested = pyqtSignal()
 
 def _keyboard_listener_thread():
-    comtypes.CoInitialize()
+    import comtypes as _comtypes
+    _comtypes.CoInitialize()
     try:
-        keyboard.wait()
+        import keyboard as _keyboard
+        _keyboard.wait()
     finally:
-        comtypes.CoUninitialize()
+        _comtypes.CoUninitialize()
 
-def start_switcher(devices, hotkey):
+def _sync_device_ids(config_devices):
+    try:
+        sys_devices = enumerate_devices()
+    except Exception:
+        return config_devices
+    name_to_id = {}
+    for d in sys_devices:
+        name = d.get("name", "")
+        if name and name not in name_to_id:
+            name_to_id[name] = d["id"]
+    updated = []
+    for stored in config_devices:
+        if is_device_active(stored["id"]):
+            updated.append(stored)
+            continue
+        name = stored.get("name", "")
+        if name in name_to_id:
+            new_dev = dict(stored)
+            new_dev["id"] = name_to_id[name]
+            updated.append(new_dev)
+        else:
+            updated.append(stored)
+    return updated
+
+def start_switcher(initial_devices, initial_hotkey):
+    import keyboard as _keyboard_mod
+
     app = QApplication.instance()
+    if hasattr(app, '_reload_timer'):
+        app._reload_timer.stop()
     app._osd = OSDWindow()
     app._bridge = Bridge()
     osd = app._osd
     bridge = app._bridge
     bridge.show_osd.connect(osd.show_popup)
     bridge.show_unavailable.connect(osd.show_unavailable)
-    index = [0]
-    unavailable = set()
+
+    state = {
+        "devices": list(initial_devices),
+        "hotkey": initial_hotkey,
+        "index": 0,
+    }
+    _toggle_lock = threading.Lock()
+
     if not getattr(app, "_tray_started", False):
         app._tray = TrayIcon()
         app._tray.show()
         app._tray_started = True
 
-    def try_switch_to(i: int) -> bool:
-        dev = devices[i]
-        if not is_device_active(dev["id"]):
-            unavailable.add(i)
-            return False
+    def _show_current_osd():
         try:
+            idx = state["index"]
+            devs = state["devices"]
+            if 0 <= idx < len(devs):
+                dev = devs[idx]
+                vol = get_volume_percent(dev["id"])
+                icon, label = classify_device(dev)
+                bridge.show_osd.emit(icon, label, vol)
+        except Exception:
+            pass
+
+    def try_switch_to(i: int) -> bool:
+        try:
+            dev = state["devices"][i]
+            if not is_device_active(dev["id"]):
+                return False
             set_default_device(dev["id"])
-            unavailable.discard(i)
             return True
         except Exception:
-            unavailable.add(i)
             return False
 
     def toggle():
-        n = len(devices)
-        next_i = (index[0] + 1) % n
-        if try_switch_to(next_i):
-            index[0] = next_i
-        else:
-            _icon, skipped_label = classify_device(devices[next_i])
-            landed = None
-            for step in range(2, n + 1):
-                candidate = (index[0] + step) % n
-                if candidate in unavailable:
-                    continue
-                if try_switch_to(candidate):
-                    landed = candidate
-                    break
-            if landed is None:
-                if len(unavailable) >= n:
-                    bridge.show_unavailable.emit("All devices")
-                else:
-                    bridge.show_unavailable.emit(skipped_label)
+        if not _toggle_lock.acquire(blocking=False):
+            return
+        try:
+            devs = state["devices"]
+            n = len(devs)
+            if n < 2:
                 return
-            index[0] = landed
-            bridge.show_unavailable.emit(skipped_label)
-            time.sleep(1.6)
-        time.sleep(0.20)
-        dev = devices[index[0]]
-        vol = get_volume_percent(dev["id"])
-        icon, label = classify_device(dev)
-        bridge.show_osd.emit(icon, label, vol)
+            next_i = (state["index"] + 1) % n
+            if try_switch_to(next_i):
+                state["index"] = next_i
+            else:
+                _icon, skipped_label = classify_device(devs[next_i])
+                landed = None
+                for step in range(1, n):
+                    candidate = (state["index"] + step) % n
+                    if try_switch_to(candidate):
+                        landed = candidate
+                        break
+                if landed is None:
+                    bridge.show_unavailable.emit("All devices" if n > 1 else skipped_label)
+                    return
+                state["index"] = landed
+            QTimer.singleShot(220, _show_current_osd)
+        except Exception:
+            pass
+        finally:
+            QTimer.singleShot(200, lambda: _toggle_lock.release() if _toggle_lock.locked() else None)
+
+    def _on_hotkey():
+        try:
+            bridge.toggle_requested.emit()
+        except Exception:
+            pass
+
+    def _on_release(e):
+        pass
 
     try:
-        keyboard.unhook_all_hotkeys()
+        _keyboard_mod.unhook_all_hotkeys()
     except Exception:
         pass
 
-    _held = [False]
+    bridge.toggle_requested.connect(toggle, Qt.ConnectionType.QueuedConnection)
+    _keyboard_mod.add_hotkey(state["hotkey"], _on_hotkey)
+    _keyboard_mod.on_release(_on_release)
 
-    def _on_hotkey():
-        if _held[0]:
-            return  
-        _held[0] = True
-        toggle()
-
-    def _on_release(e):
-        _held[0] = False
-    keyboard.add_hotkey(hotkey, _on_hotkey)
-    keyboard.on_release(_on_release)
     if not getattr(app, "_keyboard_thread_started", False):
         threading.Thread(target=_keyboard_listener_thread, daemon=True).start()
         app._keyboard_thread_started = True
+
+    def _reload_devices():
+        try:
+            config = load_config()
+            if not config:
+                return
+            new_devices = config.get("devices", [])
+            new_hotkey = config.get("hotkey", state["hotkey"])
+            devices_changed = (new_devices != state["devices"])
+            hotkey_changed = (new_hotkey != state["hotkey"])
+            if devices_changed:
+                synced = _sync_device_ids(new_devices)
+                state["devices"] = synced
+                if state["index"] >= len(synced):
+                    state["index"] = 0
+            if hotkey_changed:
+                state["hotkey"] = new_hotkey
+                try:
+                    _keyboard_mod.unhook_all_hotkeys()
+                    _keyboard_mod.add_hotkey(new_hotkey, _on_hotkey)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    reload_timer = QTimer(app)
+    reload_timer.timeout.connect(_reload_devices)
+    reload_timer.start(5000)
+    app._reload_timer = reload_timer
+    QTimer.singleShot(1000, _reload_devices)
 
 def main():
     if not is_admin():
         show_admin_required_message()
         sys.exit(1)
+
+    global set_default_device, is_device_active, get_volume_percent, enumerate_devices
+    import comtypes
+    from ctypes import cast, POINTER
+    from comtypes import CLSCTX_ALL, GUID, IUnknown
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+
+    class IPolicyConfig(IUnknown):
+        _iid_ = GUID("{f8679f50-850a-41cf-9c72-430f290290c8}")
+        _methods_ = [
+            comtypes.STDMETHOD(ctypes.HRESULT, "GetMixFormat"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "GetDeviceFormat"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "ResetDeviceFormat"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "SetDeviceFormat"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "GetProcessingPeriod"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "SetProcessingPeriod"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "GetShareMode"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "SetShareMode"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "GetPropertyValue"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "SetPropertyValue"),
+            comtypes.STDMETHOD(ctypes.HRESULT, "SetDefaultEndpoint", [ctypes.c_wchar_p, ctypes.c_uint]),
+            comtypes.STDMETHOD(ctypes.HRESULT, "SetEndpointVisibility"),
+        ]
+
+    _POLICY_CONFIG_CLSID = GUID("{870af99c-171d-4f9e-af0d-e63df40c2bc9}")
+    _CLSID_MMDEVICE_ENUMERATOR = GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
+
+    def _set_default_device(device_id):
+        policy = comtypes.CoCreateInstance(_POLICY_CONFIG_CLSID, IPolicyConfig, CLSCTX_ALL)
+        for role in (0, 1, 2):
+            policy.SetDefaultEndpoint(device_id, role)
+
+    def _is_device_active(device_id: str) -> bool:
+        try:
+            enum = comtypes.CoCreateInstance(_CLSID_MMDEVICE_ENUMERATOR, IMMDeviceEnumerator, CLSCTX_ALL)
+            device = enum.GetDevice(device_id)
+            return device.GetState() == DEVICE_STATE_ACTIVE
+        except Exception:
+            return False
+
+    def _get_volume_percent(device_id):
+        for attempt in range(2):
+            try:
+                enum = comtypes.CoCreateInstance(_CLSID_MMDEVICE_ENUMERATOR, IMMDeviceEnumerator, CLSCTX_ALL)
+                device = enum.GetDevice(device_id)
+                iface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                vol = cast(iface, POINTER(IAudioEndpointVolume))
+                return round(vol.GetMasterVolumeLevelScalar() * 100)
+            except Exception:
+                if attempt == 0:
+                    time.sleep(0.25)
+        return 0
+
+    def _enumerate_devices() -> list[dict]:
+        seen = set()
+        result = []
+        for d in AudioUtilities.GetAllDevices():
+            try:
+                state = d._dev.GetState()
+            except Exception:
+                state = DEVICE_STATE_ACTIVE
+            if state != DEVICE_STATE_ACTIVE:
+                continue
+            if d.id in seen:
+                continue
+            seen.add(d.id)
+            result.append({"id": d.id, "name": d.FriendlyName})
+        return result
+
+    set_default_device = _set_default_device
+    is_device_active = _is_device_active
+    get_volume_percent = _get_volume_percent
+    enumerate_devices = _enumerate_devices
+
     os.environ.setdefault("QT_QPA_PLATFORM", "windows:darkmode=2")
     os.environ.setdefault("QSG_RHI_BACKEND", "d3d11")
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
